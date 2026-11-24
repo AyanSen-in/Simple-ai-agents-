@@ -1,0 +1,22 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment keys & secrets
+.env
+*.env
+
+# Output reports
+research_output.txt
+
+# Editor artifacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
