@@ -1,13 +1,14 @@
 """
 AI Research Assistant Agent
-An intelligent agent that gathers web and Wikipedia data, saves findings, and outputs structured research summaries.
+An autonomous research agent supporting OpenAI ChatGPT, Google Gemini, and Anthropic Claude.
+Equipped with live Web Search, Wikipedia Encyclopedic lookup, and automatic local file logging.
 """
 import os
 import sys
 import re
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Any
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -15,12 +16,13 @@ from pydantic import BaseModel, Field
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-# LangChain Agents & Prompts
+# LangChain Agents & LLMs
 try:
     from langchain.agents import create_tool_calling_agent, AgentExecutor
 except ImportError:
     from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 
@@ -36,87 +38,26 @@ class ResearchResponse(BaseModel):
     tools_used: List[str] = Field(default_factory=list, description="Names of tools used during the research process")
 
 
-def get_llm():
-    """Initializes and returns an LLM based on configured environment variables."""
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-    gemini_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-
-    # 1. Check for OpenAI
-    if openai_key:
-        try:
-            from langchain_openai import ChatOpenAI
-            print("🤖 Using LLM Provider: OpenAI (gpt-4o-mini)")
-            return ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=openai_key)
-        except Exception as e:
-            print(f"[!] Failed to initialize OpenAI: {e}")
-
-    # 2. Check for Google Gemini
-    if gemini_key:
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            print("🤖 Using LLM Provider: Google Gemini (gemini-1.5-flash)")
-            return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2, google_api_key=gemini_key)
-        except Exception as e:
-            print(f"[!] Failed to initialize Gemini: {e}")
-
-    # 3. Check for Anthropic Claude
-    if anthropic_key:
-        try:
-            from langchain_anthropic import ChatAnthropic
-            print("🤖 Using LLM Provider: Anthropic (claude-3-5-sonnet)")
-            return ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0.2, api_key=anthropic_key)
-        except Exception as e:
-            print(f"[!] Failed to initialize Anthropic: {e}")
-
-    # If no keys configured, prompt interactively
-    print("\n" + "=" * 60)
-    print("⚠️  No API Key detected in .env!")
-    print("=" * 60)
-    print("Please choose an LLM provider to configure:")
-    print("  1. OpenAI (requires OPENAI_API_KEY)")
-    print("  2. Google Gemini (requires GEMINI_API_KEY)")
-    print("  3. Anthropic Claude (requires ANTHROPIC_API_KEY)")
-    print("  4. Exit")
-
-    choice = input("\nEnter choice (1-4): ").strip()
-    if choice == "1":
-        key = input("Paste your OPENAI_API_KEY: ").strip()
-        if key:
-            save_key_to_env("OPENAI_API_KEY", key)
-            from langchain_openai import ChatOpenAI
-            return ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=key)
-    elif choice == "2":
-        key = input("Paste your GEMINI_API_KEY: ").strip()
-        if key:
-            save_key_to_env("GEMINI_API_KEY", key)
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2, google_api_key=key)
-    elif choice == "3":
-        key = input("Paste your ANTHROPIC_API_KEY: ").strip()
-        if key:
-            save_key_to_env("ANTHROPIC_API_KEY", key)
-            from langchain_anthropic import ChatAnthropic
-            return ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0.2, api_key=key)
-
-    print("\nExiting. Please update your .env file with a valid API key and run again.")
-    sys.exit(1)
-
-
-def save_key_to_env(key_name: str, key_val: str):
-    """Saves a provided API key to the local .env file."""
+def save_key_to_env(key_name: str, key_val: str) -> None:
+    """
+    Saves an API key to the local .env file.
+    
+    Args:
+        key_name: Name of the environment variable (e.g. 'OPENAI_API_KEY').
+        key_val: The API key string.
+    """
     lines = []
     found = False
     if env_path.exists():
         with open(env_path, "r", encoding="utf-8") as f:
             for line in f:
                 if line.startswith(f"{key_name}="):
-                    lines.append(f"{key_name}=\"{key_val}\"\n")
+                    lines.append(f'{key_name}="{key_val}"\n')
                     found = True
                 else:
                     lines.append(line)
     if not found:
-        lines.append(f"{key_name}=\"{key_val}\"\n")
+        lines.append(f'{key_name}="{key_val}"\n')
 
     with open(env_path, "w", encoding="utf-8") as f:
         f.writelines(lines)
@@ -124,10 +65,106 @@ def save_key_to_env(key_name: str, key_val: str):
     print(f"✅ Saved {key_name} to {env_path.name}!")
 
 
+def init_llm(provider: str, api_key: str) -> BaseChatModel:
+    """
+    Instantiates and returns the chat model corresponding to the chosen provider.
+    
+    Args:
+        provider: 'openai', 'gemini', or 'anthropic'.
+        api_key: The valid API key string for that provider.
+        
+    Returns:
+        BaseChatModel: Configured LangChain chat model.
+    """
+    provider_clean = provider.strip().lower()
+
+    if provider_clean == "openai":
+        from langchain_openai import ChatOpenAI
+        print("🤖 Active Model: OpenAI ChatGPT (gpt-4o-mini)")
+        return ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=api_key)
+
+    elif provider_clean == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        print("🤖 Active Model: Google Gemini (gemini-1.5-flash)")
+        return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2, google_api_key=api_key)
+
+    elif provider_clean == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        print("🤖 Active Model: Anthropic Claude (claude-3-5-sonnet)")
+        return ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0.2, api_key=api_key)
+
+    raise ValueError(f"Unsupported provider '{provider}'. Must be 'openai', 'gemini', or 'anthropic'.")
+
+
+def get_llm() -> BaseChatModel:
+    """
+    Discovers available credentials from environment or interactively prompts the user.
+    
+    Returns:
+        BaseChatModel: Initialized LangChain chat model.
+    """
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+    # Priority 1: OpenAI
+    if openai_key:
+        return init_llm("openai", openai_key)
+
+    # Priority 2: Gemini
+    if gemini_key:
+        return init_llm("gemini", gemini_key)
+
+    # Priority 3: Anthropic
+    if anthropic_key:
+        return init_llm("anthropic", anthropic_key)
+
+    # If no keys are configured in .env, prompt the user to choose
+    print("\n" + "=" * 60)
+    print("⚠️  No API Key detected in .env!")
+    print("=" * 60)
+    print("Please choose your preferred LLM provider:")
+    print("  1. OpenAI ChatGPT (requires OPENAI_API_KEY)")
+    print("  2. Google Gemini  (requires GEMINI_API_KEY)")
+    print("  3. Anthropic Claude (requires ANTHROPIC_API_KEY)")
+    print("  4. Exit")
+
+    choice = input("\nEnter choice (1-4): ").strip()
+
+    if choice == "1":
+        key = input("Paste your OPENAI_API_KEY: ").strip()
+        if key:
+            save_key_to_env("OPENAI_API_KEY", key)
+            return init_llm("openai", key)
+
+    elif choice == "2":
+        key = input("Paste your GEMINI_API_KEY: ").strip()
+        if key:
+            save_key_to_env("GEMINI_API_KEY", key)
+            return init_llm("gemini", key)
+
+    elif choice == "3":
+        key = input("Paste your ANTHROPIC_API_KEY: ").strip()
+        if key:
+            save_key_to_env("ANTHROPIC_API_KEY", key)
+            return init_llm("anthropic", key)
+
+    print("\nExiting. Please add an API key to your .env file and run again.")
+    sys.exit(1)
+
+
 def extract_json_payload(raw_text: str) -> dict:
-    """Extracts and parses JSON object from LLM response text."""
+    """
+    Parses a JSON object from text, handling markdown code fences.
+    
+    Args:
+        raw_text: The raw output string from the LLM.
+        
+    Returns:
+        dict: Parsed JSON data.
+    """
     text = raw_text.strip()
-    # Check for markdown code fences
+    # Check for markdown code fences: ```json ... ``` or ``` ... ```
     fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fence_match:
         text = fence_match.group(1)
@@ -141,9 +178,17 @@ def extract_json_payload(raw_text: str) -> dict:
     return json.loads(text)
 
 
-def parse_research_response(raw_output, default_topic: str) -> ResearchResponse:
-    """Safely converts raw agent output into a ResearchResponse model."""
-    # Handle list or dict output formats from different LangChain variants
+def parse_research_response(raw_output: Any, default_topic: str) -> ResearchResponse:
+    """
+    Safely converts the raw agent output into a validated ResearchResponse model.
+    
+    Args:
+        raw_output: Output from agent_executor.invoke().
+        default_topic: Fallback topic name if parsing fails.
+        
+    Returns:
+        ResearchResponse: Structured Pydantic model.
+    """
     if isinstance(raw_output, list) and len(raw_output) > 0:
         if isinstance(raw_output[0], dict) and "text" in raw_output[0]:
             raw_text = raw_output[0]["text"]
@@ -158,7 +203,7 @@ def parse_research_response(raw_output, default_topic: str) -> ResearchResponse:
         data = extract_json_payload(raw_text)
         return ResearchResponse(**data)
     except Exception:
-        # Graceful fallback: construct model from plain text output
+        # Fallback to plain text summary if model returned freeform text
         return ResearchResponse(
             topic=default_topic,
             summary=raw_text.strip(),
@@ -167,8 +212,13 @@ def parse_research_response(raw_output, default_topic: str) -> ResearchResponse:
         )
 
 
-def display_research_card(result: ResearchResponse):
-    """Renders a formatted card of the research output to the terminal."""
+def display_research_card(result: ResearchResponse) -> None:
+    """
+    Renders the research report formatted cleanly in the terminal.
+    
+    Args:
+        result: The validated ResearchResponse instance.
+    """
     print("\n" + "=" * 65)
     print(f"📑 RESEARCH REPORT: {result.topic.upper()}")
     print("=" * 65)
@@ -189,8 +239,16 @@ def display_research_card(result: ResearchResponse):
     print("=" * 65 + "\n")
 
 
-def build_agent(llm):
-    """Builds and returns the LangChain Tool-Calling AgentExecutor."""
+def build_agent(llm: BaseChatModel) -> AgentExecutor:
+    """
+    Constructs the tool-calling LangChain agent executor.
+    
+    Args:
+        llm: Initialized BaseChatModel.
+        
+    Returns:
+        AgentExecutor: Ready-to-run agent pipeline.
+    """
     parser = PydanticOutputParser(pydantic_object=ResearchResponse)
 
     prompt = ChatPromptTemplate.from_messages(
@@ -215,17 +273,17 @@ Instructions:
     ).partial(format_instructions=parser.get_format_instructions())
 
     agent = create_tool_calling_agent(llm=llm, prompt=prompt, tools=ALL_TOOLS)
-    agent_executor = AgentExecutor(
+    return AgentExecutor(
         agent=agent,
         tools=ALL_TOOLS,
         verbose=True,
         handle_parsing_errors=True,
         max_iterations=10
     )
-    return agent_executor
 
 
-def main():
+def main() -> None:
+    """Interactive CLI execution loop."""
     print("\n" + "=" * 60)
     print("          🔍 AI RESEARCH ASSISTANT AGENT")
     print("=" * 60)
