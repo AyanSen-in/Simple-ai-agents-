@@ -39,13 +39,7 @@ class ResearchResponse(BaseModel):
 
 
 def save_key_to_env(key_name: str, key_val: str) -> None:
-    """
-    Saves an API key to the local .env file.
-    
-    Args:
-        key_name: Name of the environment variable (e.g. 'OPENAI_API_KEY').
-        key_val: The API key string.
-    """
+    """Saves an API key to the local .env file."""
     lines = []
     found = False
     if env_path.exists():
@@ -80,18 +74,21 @@ def init_llm(provider: str, api_key: str) -> BaseChatModel:
 
     if provider_clean == "openai":
         from langchain_openai import ChatOpenAI
-        print("🤖 Active Model: OpenAI ChatGPT (gpt-4o-mini)")
-        return ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=api_key)
+        model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+        print(f"🤖 Active Model: OpenAI ChatGPT ({model_name})")
+        return ChatOpenAI(model=model_name, temperature=0.2, api_key=api_key)
 
     elif provider_clean == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
-        print("🤖 Active Model: Google Gemini (gemini-1.5-flash)")
-        return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2, google_api_key=api_key)
+        model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
+        print(f"🤖 Active Model: Google Gemini ({model_name})")
+        return ChatGoogleGenerativeAI(model=model_name, api_key=api_key)
 
     elif provider_clean == "anthropic":
         from langchain_anthropic import ChatAnthropic
-        print("🤖 Active Model: Anthropic Claude (claude-3-5-sonnet)")
-        return ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0.2, api_key=api_key)
+        model_name = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022").strip()
+        print(f"🤖 Active Model: Anthropic Claude ({model_name})")
+        return ChatAnthropic(model=model_name, temperature=0.2, api_key=api_key)
 
     raise ValueError(f"Unsupported provider '{provider}'. Must be 'openai', 'gemini', or 'anthropic'.")
 
@@ -154,17 +151,9 @@ def get_llm() -> BaseChatModel:
 
 
 def extract_json_payload(raw_text: str) -> dict:
-    """
-    Parses a JSON object from text, handling markdown code fences.
-    
-    Args:
-        raw_text: The raw output string from the LLM.
-        
-    Returns:
-        dict: Parsed JSON data.
-    """
+    """Parses a JSON object from text, handling markdown code fences."""
     text = raw_text.strip()
-    # Check for markdown code fences: ```json ... ``` or ``` ... ```
+    # Check for markdown code fences
     fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fence_match:
         text = fence_match.group(1)
@@ -179,16 +168,7 @@ def extract_json_payload(raw_text: str) -> dict:
 
 
 def parse_research_response(raw_output: Any, default_topic: str) -> ResearchResponse:
-    """
-    Safely converts the raw agent output into a validated ResearchResponse model.
-    
-    Args:
-        raw_output: Output from agent_executor.invoke().
-        default_topic: Fallback topic name if parsing fails.
-        
-    Returns:
-        ResearchResponse: Structured Pydantic model.
-    """
+    """Safely converts the raw agent output into a validated ResearchResponse model."""
     if isinstance(raw_output, list) and len(raw_output) > 0:
         if isinstance(raw_output[0], dict) and "text" in raw_output[0]:
             raw_text = raw_output[0]["text"]
@@ -203,7 +183,6 @@ def parse_research_response(raw_output: Any, default_topic: str) -> ResearchResp
         data = extract_json_payload(raw_text)
         return ResearchResponse(**data)
     except Exception:
-        # Fallback to plain text summary if model returned freeform text
         return ResearchResponse(
             topic=default_topic,
             summary=raw_text.strip(),
@@ -213,12 +192,7 @@ def parse_research_response(raw_output: Any, default_topic: str) -> ResearchResp
 
 
 def display_research_card(result: ResearchResponse) -> None:
-    """
-    Renders the research report formatted cleanly in the terminal.
-    
-    Args:
-        result: The validated ResearchResponse instance.
-    """
+    """Renders the research report formatted cleanly in the terminal."""
     print("\n" + "=" * 65)
     print(f"📑 RESEARCH REPORT: {result.topic.upper()}")
     print("=" * 65)
@@ -240,15 +214,7 @@ def display_research_card(result: ResearchResponse) -> None:
 
 
 def build_agent(llm: BaseChatModel) -> AgentExecutor:
-    """
-    Constructs the tool-calling LangChain agent executor.
-    
-    Args:
-        llm: Initialized BaseChatModel.
-        
-    Returns:
-        AgentExecutor: Ready-to-run agent pipeline.
-    """
+    """Constructs the tool-calling LangChain agent executor."""
     parser = PydanticOutputParser(pydantic_object=ResearchResponse)
 
     prompt = ChatPromptTemplate.from_messages(
